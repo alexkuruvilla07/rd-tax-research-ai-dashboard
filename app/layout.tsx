@@ -13,8 +13,9 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Vercel BFCM 2025",
-  description: "A recreation of Vercel's Black Friday - Cyber Monday 2025 dashboard",
+  title: "DONE & DONE | Chief Get It Done Officer",
+  description:
+    "Administrative and operational services for busy entrepreneurs and business leaders.",
     generator: 'v0.app'
 };
 
