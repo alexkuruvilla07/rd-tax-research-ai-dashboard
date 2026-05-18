@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
+import { ChangeEvent, FormEvent, KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertTriangle,
   BookMarked,
@@ -11,11 +11,15 @@ import {
   Gavel,
   Lightbulb,
   MessageSquare,
+  Paperclip,
   RotateCcw,
   Search,
   Send,
   ShieldCheck,
   Sparkles,
+  Table2,
+  Trash2,
+  UploadCloud,
   UserRound,
 } from "lucide-react";
 
@@ -29,6 +33,17 @@ type ChatMessage = {
     items: string[];
     tone: string;
   }[];
+};
+
+type ImportedFile = {
+  id: number;
+  name: string;
+  size: number;
+  type: string;
+  category: string;
+  preview: string;
+  extractedText?: string;
+  imageUrl?: string;
 };
 
 const modes = [
@@ -46,7 +61,68 @@ const starterPrompts = [
   "Help me defend a pricing algorithm project under audit.",
 ];
 
-function makeAssistantMessage(prompt: string, mode: string, id: number): ChatMessage {
+const acceptedFileTypes = [
+  ".doc",
+  ".docx",
+  ".xls",
+  ".xlsx",
+  ".csv",
+  ".pdf",
+  ".png",
+  ".jpg",
+  ".jpeg",
+  ".webp",
+  ".txt",
+  ".md",
+];
+
+function formatBytes(bytes: number) {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function categorizeFile(file: File) {
+  const name = file.name.toLowerCase();
+
+  if (name.endsWith(".doc") || name.endsWith(".docx")) return "Word memo";
+  if (name.endsWith(".xls") || name.endsWith(".xlsx") || name.endsWith(".csv")) return "Spreadsheet";
+  if (name.endsWith(".png") || name.endsWith(".jpg") || name.endsWith(".jpeg") || name.endsWith(".webp")) {
+    return "Screenshot";
+  }
+  if (name.endsWith(".pdf")) return "PDF";
+  if (name.endsWith(".txt") || name.endsWith(".md")) return "Text notes";
+  return "Research file";
+}
+
+function getFilePreview(file: File) {
+  const category = categorizeFile(file);
+
+  if (category === "Spreadsheet") {
+    return "Ready for wage allocation, QRE schedules, employee hours, project lists, and cost-center review.";
+  }
+  if (category === "Word memo") {
+    return "Ready for memo review, technical narrative extraction, open-issue spotting, and citation planning.";
+  }
+  if (category === "Screenshot") {
+    return "Ready for screenshot-based evidence review, ticket trails, diagrams, UI logs, and experiment records.";
+  }
+  if (category === "PDF") {
+    return "Ready for contracts, IRS notices, technical reports, and audit-document triage.";
+  }
+  return "Ready for notes, copied research, interviews, and project fact patterns.";
+}
+
+function isReadableTextFile(file: File) {
+  const name = file.name.toLowerCase();
+  return name.endsWith(".txt") || name.endsWith(".md") || name.endsWith(".csv") || file.type.startsWith("text/");
+}
+
+function isImageFile(file: File) {
+  return file.type.startsWith("image/");
+}
+
+function makeAssistantMessage(prompt: string, mode: string, id: number, files: ImportedFile[]): ChatMessage {
   const topic = prompt.trim().replace(/\s+/g, " ");
   const lowerTopic = topic.toLowerCase();
   const isSoftware = lowerTopic.includes("software") || lowerTopic.includes("saas") || lowerTopic.includes("algorithm");
@@ -59,11 +135,42 @@ function makeAssistantMessage(prompt: string, mode: string, id: number): ChatMes
       ? "I would frame this as an exam-defense workstream first: define the qualified business component, tie each claimed activity to evidence, and prepare a clean response to likely IRS challenges."
       : "I would analyze this like a senior R&D tax reviewer: start with the business component, test technical uncertainty, map experimentation evidence, then pressure-test exclusions and cost support.";
 
+  const textFiles = files.filter((file) => file.extractedText);
+  const fileSummary =
+    files.length > 0
+      ? ` I see ${files.length} imported file${files.length === 1 ? "" : "s"} in the workspace: ${files
+          .map((file) => `${file.name} (${file.category})`)
+          .join(", ")}. I would use those as source material for evidence mapping, but I would still require consultant review before relying on conclusions.${
+          textFiles.length > 0
+            ? ` I can also read extracted text from ${textFiles.map((file) => file.name).join(", ")}.`
+            : ""
+        }`
+      : "";
+
   return {
     id,
     role: "assistant",
-    content: `${opening} For "${topic}", my preliminary view is that the position can be researchable, but it needs a tight evidence trail. I would avoid a broad conclusion until the activities, contracts, wage allocations, and technical records are mapped by project.`,
+    content: `${opening} For "${topic}", my preliminary view is that the position can be researchable, but it needs a tight evidence trail. I would avoid a broad conclusion until the activities, contracts, wage allocations, and technical records are mapped by project.${fileSummary}`,
     sections: [
+      ...(files.length > 0
+        ? [
+            {
+              title: "Imported data plan",
+              icon: Paperclip,
+              tone: "text-[#84dcc6]",
+              items: [
+                "Extract project names, dates, employees, cost categories, and technical evidence from the uploaded files.",
+                "Separate authority research from client-provided facts so the workpaper remains reviewable.",
+                textFiles.length > 0
+                  ? `Use extracted text preview: ${textFiles
+                      .map((file) => `${file.name}: ${file.extractedText}`)
+                      .join(" | ")
+                      .slice(0, 240)}`
+                  : "Flag missing source support, conflicting documents, and items that need a consultant follow-up.",
+              ],
+            },
+          ]
+        : []),
       {
         title: "Authority lens",
         icon: Gavel,
@@ -105,6 +212,7 @@ function makeAssistantMessage(prompt: string, mode: string, id: number): ChatMes
 export function ResearchAssistant() {
   const [mode, setMode] = useState(modes[0]);
   const [input, setInput] = useState("");
+  const [importedFiles, setImportedFiles] = useState<ImportedFile[]>([]);
   const [messages, setMessages] = useState<ChatMessage[]>([
     {
       id: 1,
@@ -126,6 +234,7 @@ export function ResearchAssistant() {
     },
   ]);
   const transcriptRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const latestAssistantMessage = useMemo(
     () => [...messages].reverse().find((message) => message.role === "assistant"),
@@ -146,7 +255,7 @@ export function ResearchAssistant() {
         role: "user",
         content: prompt,
       };
-      const assistantMessage = makeAssistantMessage(prompt, mode, current.length + 2);
+      const assistantMessage = makeAssistantMessage(prompt, mode, current.length + 2, importedFiles);
       return [...current, userMessage, assistantMessage];
     });
     setInput("");
@@ -172,6 +281,58 @@ export function ResearchAssistant() {
       .join("\n\n");
 
     navigator.clipboard?.writeText([latestAssistantMessage.content, sectionText].filter(Boolean).join("\n\n"));
+  }
+
+  async function handleFileImport(event: ChangeEvent<HTMLInputElement>) {
+    const selectedFiles = Array.from(event.target.files ?? []);
+    if (!selectedFiles.length) return;
+
+    const nextFiles = await Promise.all(
+      selectedFiles.map(async (file, index) => {
+        const extractedText = isReadableTextFile(file) ? (await file.text()).replace(/\s+/g, " ").slice(0, 1200) : undefined;
+
+        return {
+          id: Date.now() + index,
+          name: file.name,
+          size: file.size,
+          type: file.type || "Unknown",
+          category: categorizeFile(file),
+          preview: getFilePreview(file),
+          extractedText,
+          imageUrl: isImageFile(file) ? URL.createObjectURL(file) : undefined,
+        };
+      }),
+    );
+
+    setImportedFiles((current) => [...current, ...nextFiles]);
+    setMessages((current) => [
+      ...current,
+      {
+        id: current.length + 1,
+        role: "assistant",
+        content: `Imported ${nextFiles.length} file${nextFiles.length === 1 ? "" : "s"} into the research workspace: ${nextFiles
+          .map((file) => file.name)
+          .join(", ")}. Ask me to summarize them, build an R&D claim matrix, find substantiation gaps, or prepare an audit-ready evidence plan.`,
+        sections: [
+          {
+            title: "File intake",
+            icon: UploadCloud,
+            tone: "text-[#84dcc6]",
+            items: nextFiles.map((file) =>
+              file.extractedText
+                ? `${file.category}: ${file.name} (${formatBytes(file.size)}) · text preview captured`
+                : `${file.category}: ${file.name} (${formatBytes(file.size)})`,
+            ),
+          },
+        ],
+      },
+    ]);
+
+    event.target.value = "";
+  }
+
+  function removeImportedFile(id: number) {
+    setImportedFiles((current) => current.filter((file) => file.id !== id));
   }
 
   return (
@@ -255,9 +416,95 @@ export function ResearchAssistant() {
             </p>
           </div>
 
+          <div className="mt-4 rounded-lg border border-zinc-200 bg-white p-4">
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2 text-sm font-black">
+                <UploadCloud className="text-[#0f766e]" size={17} />
+                Import files
+              </div>
+              <span className="rounded-md bg-[#84dcc6]/25 px-2 py-1 text-[11px] font-black text-emerald-800">
+                Local
+              </span>
+            </div>
+            <p className="mt-2 text-xs leading-5 text-zinc-500">
+              Add Word docs, Excel workbooks, PDFs, screenshots, CSVs, and notes as research context.
+            </p>
+            <input
+              ref={fileInputRef}
+              accept={acceptedFileTypes.join(",")}
+              className="hidden"
+              multiple
+              onChange={handleFileImport}
+              type="file"
+            />
+            <button
+              className="mt-3 inline-flex h-10 w-full items-center justify-center gap-2 rounded-md bg-[#0f766e] px-4 text-sm font-black text-white"
+              onClick={() => fileInputRef.current?.click()}
+              type="button"
+            >
+              Choose Files <Paperclip size={16} />
+            </button>
+            <div className="mt-3 flex flex-wrap gap-1.5">
+              {["Word", "Excel", "PDF", "Images", "CSV", "TXT"].map((label) => (
+                <span key={label} className="rounded bg-zinc-100 px-2 py-1 text-[11px] font-bold text-zinc-500">
+                  {label}
+                </span>
+              ))}
+            </div>
+          </div>
+
+          {importedFiles.length > 0 && (
+            <div className="mt-4 rounded-lg border border-zinc-200 bg-white p-4">
+              <div className="flex items-center justify-between">
+                <p className="text-sm font-black">Imported data</p>
+                <span className="text-xs font-black text-zinc-400">{importedFiles.length} files</span>
+              </div>
+              <div className="mt-3 space-y-2">
+                {importedFiles.map((file) => {
+                  const FileIcon = file.category === "Spreadsheet" ? Table2 : FileText;
+
+                  return (
+                    <div key={file.id} className="rounded-lg bg-[#faf9f6] p-3 ring-1 ring-zinc-200">
+                      <div className="flex items-start gap-2">
+                        <FileIcon className="mt-0.5 shrink-0 text-[#0f766e]" size={16} />
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate text-xs font-black text-zinc-800">{file.name}</p>
+                          <p className="mt-1 text-[11px] font-bold text-zinc-400">
+                            {file.category} · {formatBytes(file.size)}
+                          </p>
+                        </div>
+                        <button
+                          aria-label={`Remove ${file.name}`}
+                          className="rounded p-1 text-zinc-400 hover:bg-white hover:text-rose-600"
+                          onClick={() => removeImportedFile(file.id)}
+                          type="button"
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      </div>
+                      <p className="mt-2 text-[11px] leading-5 text-zinc-500">{file.preview}</p>
+                      {file.imageUrl && (
+                        <img
+                          alt={`Preview of ${file.name}`}
+                          className="mt-2 max-h-28 w-full rounded-md object-cover ring-1 ring-zinc-200"
+                          src={file.imageUrl}
+                        />
+                      )}
+                      {file.extractedText && (
+                        <p className="mt-2 line-clamp-3 rounded-md bg-white p-2 text-[11px] leading-5 text-zinc-500 ring-1 ring-zinc-200">
+                          {file.extractedText}
+                        </p>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
           <button
             className="mt-4 inline-flex h-10 w-full items-center justify-center gap-2 rounded-md border border-zinc-200 bg-white px-4 text-sm font-black text-zinc-700"
-            onClick={() =>
+            onClick={() => {
               setMessages([
                 {
                   id: 1,
@@ -277,8 +524,9 @@ export function ResearchAssistant() {
                     },
                   ],
                 },
-              ])
-            }
+              ]);
+              setImportedFiles([]);
+            }}
             type="button"
           >
             New Chat <RotateCcw size={16} />
@@ -293,7 +541,9 @@ export function ResearchAssistant() {
               </span>
               <div>
                 <p className="text-sm font-black">R&D Oracle Chat</p>
-                <p className="text-xs font-semibold text-white/45">{mode}</p>
+                <p className="text-xs font-semibold text-white/45">
+                  {mode} · {importedFiles.length} imported file{importedFiles.length === 1 ? "" : "s"}
+                </p>
               </div>
             </div>
             <button
@@ -370,15 +620,26 @@ export function ResearchAssistant() {
               />
               <div className="flex flex-col gap-2 border-t border-zinc-200 pt-2 sm:flex-row sm:items-center sm:justify-between">
                 <p className="text-xs font-semibold text-zinc-500">
-                  Press Enter to send. Use Shift+Enter for a new line.
+                  {importedFiles.length > 0
+                    ? "Imported files will be treated as research context for the next answer."
+                    : "Press Enter to send. Use Shift+Enter for a new line."}
                 </p>
-                <button
-                  className="inline-flex h-10 items-center justify-center gap-2 rounded-md bg-zinc-950 px-4 text-sm font-black text-white disabled:cursor-not-allowed disabled:opacity-45"
-                  disabled={!input.trim()}
-                  type="submit"
-                >
-                  Send <Send size={16} />
-                </button>
+                <div className="flex flex-col gap-2 sm:flex-row">
+                  <button
+                    className="inline-flex h-10 items-center justify-center gap-2 rounded-md border border-zinc-200 px-4 text-sm font-black text-zinc-700"
+                    onClick={() => fileInputRef.current?.click()}
+                    type="button"
+                  >
+                    Attach <Paperclip size={16} />
+                  </button>
+                  <button
+                    className="inline-flex h-10 items-center justify-center gap-2 rounded-md bg-zinc-950 px-4 text-sm font-black text-white disabled:cursor-not-allowed disabled:opacity-45"
+                    disabled={!input.trim()}
+                    type="submit"
+                  >
+                    Send <Send size={16} />
+                  </button>
+                </div>
               </div>
             </div>
           </form>
