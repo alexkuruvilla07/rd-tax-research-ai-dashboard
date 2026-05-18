@@ -13,10 +13,10 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "DONE & DONE | Chief Get It Done Officer",
+  title: "R&D Oracle | Tax Research AI",
   description:
-    "Administrative and operational services for busy entrepreneurs and business leaders.",
-    generator: 'v0.app'
+    "An AI research command center for tax consultants working on R&D credit analysis, authority review, and exam defense.",
+  generator: "v0.app",
 };
 
 export default function RootLayout({
